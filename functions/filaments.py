@@ -251,13 +251,13 @@ def order_points(skeleton, frame):
         return None
 
 # Ok so I want a function that takes in a dictionary
-def midpoint_trace(input_dict):
+def midpoint_trace(input_dict,frame):
     """ Compute a trace of single filament mid points through the image stack """
     outputs=[]
     frames_n = list(input_dict.keys())
     for n in range(1, len(frames_n)):
         filament = input_dict[frames_n[n-1]] # We start from zeroth filament
-        ordered_skeleton = order_points(filament, frames[0])
+        ordered_skeleton = order_points(filament, frame)
         #
         if type(ordered_skeleton) != type(None):
             mid_index = int(len(ordered_skeleton)/2)
