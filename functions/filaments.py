@@ -213,3 +213,128 @@ def length(sorted_skeleton):
         length += norm
     return length
 #####
+
+def order_points(skeleton, frame):
+    """ Need to clean this up, loadsa spaghetti code diomio """
+    args = np.copy(skeleton)
+    image = np.zeros(frame.shape) # fake imahe
+    # now i reconstruct skeleton image with args
+    for arg in args:
+        image[arg[0], arg[1]]=1
+
+    counter = 0
+    reference_pt = 0
+
+    for arg in args:
+        if fil.nearest_neighbors(arg, image) == 3:
+            counter = counter + 1
+    for arg in args:
+         if fil.nearest_neighbors(arg,image)==1:
+             reference_pt = arg
+             break
+
+    if counter==0 and type(reference_pt)==type(np.array([])):
+        #proceed with analysis
+        #find simple ends
+        norms = []
+        # sort by euclidean norm
+        for arg in args:
+            norm = np.linalg.norm(arg.astype(np.float)-reference_pt.astype(np.float))
+            norms.append(norm)
+        norms = np.array(norms)
+        normed_pts = np.insert(args, 2, norms, axis=1)
+        sorted_column = normed_pts[:,2].argsort()
+        # sort the normed pts by the sorted norm colum
+        normed_pts = normed_pts[sorted_column]
+        return normed_pts
+    elif counter>0 or reference_pt==0:
+        return None
+
+# Ok so I want a function that takes in a dictionary
+def midpoint_trace(input_dict):
+    """ Compute a trace of single filament mid points through the image stack """
+    outputs=[]
+    frames_n = list(input_dict.keys())
+    for n in range(1, len(frames_n)):
+        filament = input_dict[frames_n[n-1]] # We start from zeroth filament
+        ordered_skeleton = order_points(filament, frames[0])
+        #
+        if type(ordered_skeleton) != type(None):
+            mid_index = int(len(ordered_skeleton)/2)
+            mid_point  = ordered_skeleton[mid_index][0:2]
+            outputs.append([mid_point, int(frames_n[n-1])])
+    return np.array(outputs, dtype=object)
+
+# lets make function to compute a speed trace
+def speedtrace(mpt,input_dict):
+    # need also input dict to have the whole filament for reference
+    # Iterate over midpoints
+    first_vector = mpt[1][0] - mpt[0][0]
+    result = []
+    for frame in mpt[:,1].astype(np.int16)[1:]:
+        #Get the respective filament from input dict
+        filament =  input_dict[str(frame)]
+        filament = order_points(filament, frames[0])[:,0:2]
+
+        current_pt = mpt[np.argwhere(mpt[:,1]==frame)[0][0]][0]
+        prev_pt =    mpt[np.argwhere(mpt[:,1]==frame)[0][0]-1][0]
+        motion_vector = current_pt - prev_pt
+        ##calc dt
+        dt = (frame  - mpt[:,1][np.argwhere(mpt[:,1]==frame)[0][0]-1])*5 # 5min
+
+        single_result = []
+        for point in filament:
+            if np.dot(point - prev_pt, motion_vector) > 0:
+                if np.sign(np.dot(current_pt - point, motion_vector)) >0:  # ii thought <0 but this works
+                    single_result.append(point.tolist())
+
+        #results.append(single_result) #if len(res) == 0: res.append(current_pt.tolist())
+        #results now contains a set of ordered trajectories
+        segment_len = fil.line_len(np.array(single_result), prev_pt, current_pt)
+        result.append(segment_len*np.sign(np.dot(motion_vector, first_vector)))
+    return np.array(result)*1.4748/dt
+
+def trajectory_endpoints(mpt, pt_a, pt_b):
+    snake = np.array ( [[mpt[n][0][0],mpt[n][0][1]] for n in range(0, len(mpt))] )
+
+    a_dists = []
+    b_dists = []
+    for point in snake:
+        dist_a = np.linalg.norm(point - pt_a)
+        dist_b =  np.linalg.norm(point - pt_b)
+        a_dists.append([dist_a, point[0], point[1]])
+        b_dists.append([dist_b, point[0], point[1]])
+    a_dists = np.array(a_dists)
+    b_dists = np.array(b_dists)
+
+    ret_a = a_dists[np.argwhere(a_dists[:,0] == np.min(a_dists[:,0]))[0][0]][1:]
+    ret_b = b_dists[np.argwhere(b_dists[:,0] == np.min(b_dists[:,0]))[0][0]][1:]
+
+
+    return ret_a, ret_b
+
+def project(point_a, trajectory):
+    a_dists = []
+    for point in trajectory:
+        dist_a = np.linalg.norm(point[0:2] - point_a)
+        a_dists.append([dist_a, point[0], point[1]])
+    a_dists = np.array(a_dists)
+    ret_a = a_dists[np.argwhere(a_dists[:,0] == np.min(a_dists[:,0]))[0][0]][1:]
+    return ret_a
+#should just use this function twice for the above block as well
+# result is image, but ordered path are arguments
+
+
+#find args of ordered path where the mpt ends are closest
+
+def find_args(ordered_path, a_clip, b_clip):
+    found_a =0
+    found_b =0
+    for n in range(0, len(ordered_path)):
+        point_x = ordered_path[n][0]
+        point_y = ordered_path[n][1]
+        if point_x == a_clip[0] and point_y == a_clip[1]:
+            found_a = n
+        elif point_x == b_clip[0] and point_y == b_clip[1]:
+            found_b = n
+    return found_a,found_b
