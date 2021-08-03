@@ -226,10 +226,10 @@ def order_points(skeleton, frame):
     reference_pt = 0
 
     for arg in args:
-        if fil.nearest_neighbors(arg, image) == 3:
+        if nearest_neighbors(arg, image) == 3:
             counter = counter + 1
     for arg in args:
-         if fil.nearest_neighbors(arg,image)==1:
+         if nearest_neighbors(arg,image)==1:
              reference_pt = arg
              break
 
@@ -290,7 +290,7 @@ def speedtrace(mpt,input_dict):
 
         #results.append(single_result) #if len(res) == 0: res.append(current_pt.tolist())
         #results now contains a set of ordered trajectories
-        segment_len = fil.line_len(np.array(single_result), prev_pt, current_pt)
+        segment_len = line_len(np.array(single_result), prev_pt, current_pt)
         result.append(segment_len*np.sign(np.dot(motion_vector, first_vector)))
     return np.array(result)*1.4748/dt
 
