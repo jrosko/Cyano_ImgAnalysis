@@ -23,102 +23,6 @@ def pre_process(input_frame,  thr_val, denoise =  True, op_ker_d = 2):
     return opening
 
 
-# test function for pruning
-def prune_skeleton(skeleton_input):
-    skeleton = np.copy(skeleton_input) # if i dont copy it actually changes first_skeleton
-    skeleton = np.pad(skeleton,5, constant_values=(0)) # move this into pre process
-    args = np.argwhere(skeleton >0 ).astype('uint8') # indices of non zero pixels
-    one_n = [] # simple ends
-    three_n = [] # forks
-    for arg in args:
-        nbors = nearest_neighbors(arg,skeleton)
-        if nbors == 3:
-            three_n.append(arg)
-        elif nbors == 1:
-            one_n.append(arg)
-    one_n = np.array(one_n).astype(np.int32)
-    three_n = np.array(three_n).astype(np.int32)
-    ## fork can be two things, a offshoot in the middle of the line or the end fork
-    ## let's deal with offshoots first
-    porcodio = 0
-    for nbor in three_n:
-        distances = []
-        for p in range(0, len(one_n)):
-            dist = np.linalg.norm(nbor - one_n[p], ord=None)
-            distances.append([dist,p])
-        distances = np.array(distances)
-        min_dist_ind = distances[np.argmin(distances[:,0])][1].astype(np.int16)
-        min_dist_pt = one_n[min_dist_ind]
-        # now we know the point closest to the 3-fork
-        # let's begin from this point
-        # very nearest nbors should be
-        found = 0
-        current_pt = min_dist_pt
-        while True:
-            nearest_pt = nearest(skeleton, current_pt)
-            if type(nearest_pt) == type(None):
-                porcodio = 1
-                break
-            if np.all(current_pt == nbor):
-                break
-            else:
-                skeleton[current_pt[0], current_pt[1]] = 0
-                current_pt = nearest_pt
-        #skeleton[min_dist_pt[0], min_dist_pt[1]]= 0
-    if porcodio != 1:
-        return skeleton
-    else:
-        return None
-
-## helper functions
-
-def nearest(image, point):
-    very_near = point - np.array([[1,0],[-1,0],[0,1],[0,-1]])
-    near = point - np.array([[1,1],[-1,-1],[-1,1],[1,-1]])
-    rtn = 0
-    found = 0
-    if np.any(image[very_near[:,0], very_near[:,1]] > 0):
-        for point in very_near:
-            if image[point[0], point[1]] > 0:
-                rtn = point
-                found = 1
-                break
-    elif np.any(image[near[:,0], near[:,1]] > 0) and found == 0:
-        for point in near:
-            if image[point[0], point[1]] > 0:
-                rtn = point
-                found  = 1
-                break
-    if found == 1:
-        return rtn
-    else:
-        return None
-
-def nearest_neighbors(index_pair,image):
-    """
-    Takes in the an index pair, belonging to arghwhere(image > 0), and the respective image.
-    Interrogates a 3x3 lattice centred around the index_pair, in an anticlockwise way.
-    Counts unique neighbours to the central element.
-    Returns count of unique members
-    """
-    delta_i = np.array([[0,1], [0,0], [1,0], [2,0], [2,1], [2,2], [1,2], [0,2]]) - np.array([1,1])
-    initial_nonzero = 0
-    unique_count = 0
-    prev_nonzero = 0
-    for m in range(0, len(delta_i)):
-        new_i = index_pair + delta_i[m] #
-        if image[new_i[0], new_i[1]] > 0: # Can't index image with [new_i] but need to separate the values
-            if prev_nonzero == 0:
-                unique_count = unique_count + 1
-                prev_nonzero = 1
-                if m == 0:
-                    initial_nonzero = 1
-                if m == len(delta_i)-1 and initial_nonzero == 1:
-                    unique_count = unique_count - 1
-        elif image[new_i[0], new_i[1]] == 0:
-            prev_nonzero=0
-    return unique_count
-
 def get_skeletons(input_frames,min_mass=50):
     """ returns args of skeleton points in the main image reference frame.
     the output is of kind out['frame']['mass']= xy points"""
@@ -338,3 +242,102 @@ def find_args(ordered_path, a_clip, b_clip):
         elif point_x == b_clip[0] and point_y == b_clip[1]:
             found_b = n
     return found_a,found_b
+
+
+############
+
+
+def next_point(end_point_arg, image):
+    # Turn this point into an 'image'
+    only_point  = np.zeros((image.shape)).astype('uint8')
+    only_point[end_point_arg[0], end_point_arg[1]] = 1
+    # Dilate this 'image'
+    dilated = cv2.dilate(only_point, np.ones((3,3))).astype('uint8')
+    # Intersection between the dilated square and the actual image
+    intersection  = cv2.bitwise_and(dilated,image)
+    # I caught two points, XOR will give me the one that isn't only_point
+    next_pt = cv2.bitwise_xor(intersection,only_point)
+    return np.argwhere(next_pt>0).tolist()[0]
+
+
+def ends_junctions(image, kernels):
+    # Find all junctions
+    junctions = np.zeros(image.shape).astype('uint8')
+    for kernel in kernels[1]:
+        junctions +=  cv2.morphologyEx(image, cv2.MORPH_HITMISS, kernel)
+    # Find all line ends
+    end_points = np.zeros(image.shape).astype('uint8')
+    for kernel in kernels[2]:
+        end_points +=  cv2.morphologyEx(image, cv2.MORPH_HITMISS, kernel)
+    return end_points, junctions
+
+
+def prune_skeleton(image, kernels, n_pts):
+    pruned = np.pad(output_image,5, constant_values=(0))
+    original = np.copy(pruned)
+
+    # Remove superfluous corners from skeleton
+    for kernel in kernels[0]:
+        pruned = pruned  - cv2.morphologyEx(pruned, cv2.MORPH_HITMISS, kernel)
+    end_points, junctions = ends_junctions(pruned, kernels)
+
+    # Pruning time - branches
+    end_point_args = np.argwhere(end_points > 0).tolist()
+    junction_args = np.argwhere(junctions>0).tolist()
+    # Note to myself , [1,2] in [[1,2],[3,4]] kind of stuff only reliably works with lists, arrays can give weird results
+
+    for point in end_point_args:
+        current_pt = point
+        point_buffer = []
+        for m in range(0, n_pts):
+            if current_pt in junction_args:
+                point_buffer = []
+                break
+            else:
+                point_buffer.append(current_pt)
+                next_pt = next_point(current_pt, pruned)
+                pruned[current_pt[0], current_pt[1]] = 0
+                current_pt = next_pt
+        if len(point_buffer) > 0:
+            for point in point_buffer:
+                pruned[point[0], point[1]] = 1
+
+    # This process might produce a superfluous edge or two
+    for kernel in kernels[0]:
+        pruned = pruned  - cv2.morphologyEx(pruned, cv2.MORPH_HITMISS, kernel)
+
+    """ Below should be written better but yolo now"""
+    # Verify that there are no more junctions
+    junctions = np.zeros(pruned.shape).astype('uint8')
+    for kernel in kernels[1]:
+        junctions +=  cv2.morphologyEx(pruned, cv2.MORPH_HITMISS, kernel)
+
+    if len(np.argwhere(junctions > 0)) > 0 :
+        print('Junctions still present: ', len(np.argwhere(junctions > 0)))
+        # There may be some loops left
+        filled_holes = cv2.morphologyEx(pruned, cv2.MORPH_CLOSE, np.ones((3,3)))
+        pruned = skeletonize(filled_holes, method = 'lee')
+        # Verify that there are no more junctions
+        junctions_test = np.zeros(pruned.shape).astype('uint8')
+        for kernel in kernels[1]:
+            junctions_test +=  cv2.morphologyEx(pruned, cv2.MORPH_HITMISS, kernel)
+        if len(np.argwhere(junctions_test > 0)) > 0:
+            print('Junctions still present :', len(np.argwhere(junctions_test > 0)))
+            return None
+        else:
+            print('Junctions Resolved')
+            return pruned
+    else:
+        return pruned
+    # Need to fix extremity forks
+
+def load_kernels(paths):
+    """ Load morphology kernels from files.
+    Expects a list of paths of form
+    [path_edge, path_junction, path_end]"""
+
+    kernels = []
+    for n in range(0,3):
+        with open(paths[n], 'rb') as f:
+            kernels.append(np.load(f))
+    return kernels
