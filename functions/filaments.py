@@ -23,7 +23,7 @@ def pre_process(input_frame,  thr_val, denoise =  True, op_ker_d = 2):
     return opening
 
 
-def get_skeletons(input_frames,min_mass=50):
+def get_skeletons(input_frames,min_mass=50, kernels, n_pts):
     """ returns args of skeleton points in the main image reference frame.
     the output is of kind out['frame']['mass']= xy points"""
     results_dict = {}
@@ -71,7 +71,7 @@ def get_skeletons(input_frames,min_mass=50):
 
             skeleton = skeletonize(part_img, method='lee')
 
-            skeleton = prune_skeleton(skeleton)
+            skeleton = prune_skeleton(skeleton, kernels, n_pts)
 
             if type(skeleton)!=type(None):
                 pts = np.argwhere(skeleton>0)
